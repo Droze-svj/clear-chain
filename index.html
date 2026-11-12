@@ -1,0 +1,749 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Clear-Chain Live Handover (Offline)</title>
+<!-- Fully offline: no web fonts, CDNs or network calls. Uses the fonts already on the laptop. -->
+<style>
+:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}
+</style>
+<style>
+/* Layout: four real devices in handover order (farmer phone, packer tablet, driver scanner, customer phone), hub scoreboard and trace log beneath. */
+:root {
+  --bg: #e7ecea;
+  --ink: #17252b;
+  --muted: #5b6b70;
+  --line: #cfd8d6;
+  --accent: #1d4e5f;
+  --accent-ink: #ffffff;
+  --screen: #ffffff;
+  --screen-2: #f2f5f4;
+  --bubble-in: #ffffff;
+  --bubble-out: #d9efe0;
+  --chat-bg: #ece6dc;
+  --good: #2f7a3e; --good-soft: #e3f1e5;
+  --bad: #b8371f; --bad-soft: #fae6e1;
+  --warn: #9a6400; --warn-soft: #fbf0d9;
+  --info: #24609c; --info-soft: #e2ecf7;
+  --bezel: #1b1f22;
+  --log-bg: #17252b; --log-ink: #e6eeee; --log-dim: #8fa5a8;
+  --display: "Avenir Next Condensed", "Barlow Condensed", "Roboto Condensed", "Arial Narrow", sans-serif;
+  --body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f181b; --ink: #e4ecec; --muted: #9aaeb1; --line: #2b3d41; --accent: #7fb7c9; --accent-ink: #0d1a1d;
+    --screen: #172326; --screen-2: #1e2d31; --bubble-in: #213034; --bubble-out: #1f3d2b; --chat-bg: #111c1f;
+    --good: #7cc68a; --good-soft: #1c3322; --bad: #f08a72; --bad-soft: #3a211b; --warn: #e8b55a; --warn-soft: #3a2d14; --info: #8ab8ec; --info-soft: #1b2b3d;
+    --bezel: #050708; --log-bg: #0a1214; --log-ink: #dbe6e6; --log-dim: #6f8689; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f181b; --ink: #e4ecec; --muted: #9aaeb1; --line: #2b3d41; --accent: #7fb7c9; --accent-ink: #0d1a1d;
+  --screen: #172326; --screen-2: #1e2d31; --bubble-in: #213034; --bubble-out: #1f3d2b; --chat-bg: #111c1f;
+  --good: #7cc68a; --good-soft: #1c3322; --bad: #f08a72; --bad-soft: #3a211b; --warn: #e8b55a; --warn-soft: #3a2d14; --info: #8ab8ec; --info-soft: #1b2b3d;
+  --bezel: #050708; --log-bg: #0a1214; --log-ink: #dbe6e6; --log-dim: #6f8689; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 14px; line-height: 1.45; }
+.wrap { max-width: 1440px; margin: 0 auto; padding-block: 20px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 18px; }
+header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
+h1 { font-family: var(--display); font-size: 30px; text-transform: uppercase; letter-spacing: .02em; margin: 0; line-height: 1.05; }
+.sub { color: var(--muted); margin: 4px 0 0; max-width: 70ch; }
+.clock { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.clock b { color: var(--ink); font-weight: 500; }
+.presets { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button { font: 500 13px/1.25 var(--body); border-radius: 8px; padding: 9px 12px; cursor: pointer; border: 1px solid var(--line); background: var(--screen); color: var(--ink); }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.solid { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+/* Scoreboard */
+.score { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.score > div { background: var(--screen); padding: 12px 16px; min-width: 0; }
+.k { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.v { font-family: var(--display); font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; overflow-wrap: anywhere; }
+.v small { font-family: var(--body); font-size: 13px; font-weight: 500; color: var(--muted); }
+.pill { display: inline-block; font: 600 12px/1.2 var(--body); padding: 6px 9px; border-radius: 999px; margin-top: 4px; }
+.pill.good { background: var(--good-soft); color: var(--good); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.info { background: var(--info-soft); color: var(--info); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+
+/* Devices */
+.devices { display: flex; flex-wrap: wrap; gap: 18px; justify-content: center; align-items: flex-start; }
+.device { display: grid; gap: 8px; justify-items: center; max-width: 100%; }
+.role { font-family: var(--display); font-size: 16px; letter-spacing: .06em; text-transform: uppercase; display: flex; gap: 8px; align-items: center; }
+.role .n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 13px; }
+.role.turn .n { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+.frame { background: var(--bezel); padding: 10px; border-radius: 34px; max-width: 100%; }
+.frame.tablet { border-radius: 24px; padding: 14px; }
+.screen { background: var(--screen); color: var(--ink); border-radius: 26px; overflow: hidden; display: flex; flex-direction: column; width: 264px; height: 580px; max-width: 100%; }
+.tablet .screen { width: min(400px, calc(100vw - 72px)); height: 580px; border-radius: 12px; }
+.status { display: flex; justify-content: space-between; font: 600 11px/1 var(--body); padding: 10px 18px 6px; color: var(--ink); }
+.appbar { padding: 8px 14px 10px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: center; }
+.avatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font: 600 13px/1 var(--body); color: #fff; flex: none; }
+.appbar .t { font-weight: 600; font-size: 14px; line-height: 1.2; }
+.appbar .s { font-size: 11px; color: var(--muted); }
+.body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.chat { background: var(--chat-bg); }
+.msg { max-width: 86%; padding: 8px 10px 6px; border-radius: 10px; background: var(--bubble-in); font-size: 13px; box-shadow: 0 1px 0 rgba(0,0,0,.06); align-self: flex-start; overflow-wrap: anywhere; }
+.msg.out { align-self: flex-end; background: var(--bubble-out); }
+.msg .time { display: block; text-align: right; font-size: 10px; color: var(--muted); margin-top: 2px; }
+.msg svg { display: block; width: 100%; height: auto; border-radius: 6px; margin-bottom: 4px; }
+.sys { align-self: center; font-size: 11px; color: var(--muted); background: var(--screen-2); padding: 3px 10px; border-radius: 999px; text-align: center; }
+.composer { padding: 10px 12px 14px; border-top: 1px solid var(--line); display: grid; gap: 6px; background: var(--screen); }
+.composer button { width: 100%; text-align: center; }
+.btn-good { background: var(--good); color: #fff; border-color: var(--good); }
+.btn-bad { background: var(--bad); color: #fff; border-color: var(--bad); }
+:root:not([data-theme="light"]) .btn-good, :root:not([data-theme="light"]) .btn-bad { color: var(--accent-ink); }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .btn-good, :root:not([data-theme="dark"]) .btn-bad { color: #fff; } }
+:root[data-theme="light"] .btn-good, :root[data-theme="light"] .btn-bad { color: #fff; }
+.btn-info { background: var(--info-soft); color: var(--info); border-color: var(--info); }
+.big { padding: 14px; font-size: 15px; font-weight: 600; border-radius: 12px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.waiting { margin: auto; text-align: center; color: var(--muted); font-size: 13px; padding: 20px; display: grid; gap: 6px; }
+.waiting b { color: var(--ink); font-size: 14px; }
+.banner { border-radius: 8px; padding: 8px 10px; font-size: 12.5px; }
+.banner.bad { background: var(--bad-soft); color: var(--bad); }
+.banner.good { background: var(--good-soft); color: var(--good); }
+.banner.warn { background: var(--warn-soft); color: var(--warn); }
+
+/* Packer tablet */
+.order-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: grid; gap: 6px; }
+.order-card .hd { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.order-card .id { font-family: var(--mono); font-weight: 500; }
+.items { margin: 0; padding: 0; list-style: none; font-size: 12.5px; display: grid; gap: 2px; }
+.items li { display: flex; justify-content: space-between; gap: 8px; }
+.items .w { color: var(--muted); font-variant-numeric: tabular-nums; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; text-align: center; background: var(--screen); padding: 9px 6px; font-size: 12.5px; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.tog { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.tog:last-child { border-bottom: 0; }
+.tog small { display: block; color: var(--muted); font-size: 11px; }
+.switch { position: relative; width: 42px; height: 24px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; margin: 0; }
+.switch span { position: absolute; inset: 0; background: var(--line); border-radius: 999px; transition: background .15s; pointer-events: none; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.switch input:checked + span { background: var(--good); }
+.switch input:checked + span::after { transform: translateX(18px); }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.preview { border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--screen-2); }
+.preview svg { display: block; width: 100%; height: auto; }
+.preview .cap { font-size: 11px; color: var(--muted); padding: 4px 8px; }
+.photo-thumb { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.photo-thumb svg { width: 64px; height: auto; border-radius: 4px; border: 2px solid var(--screen); box-shadow: 0 0 0 1px var(--line); }
+
+/* Scanner */
+.scanner { background: #0b0f10; color: #e9f0f0; }
+.scanner .appbar { border-color: #263236; }
+.scanner .appbar .s { color: #9fb2b5; }
+.viewfinder { position: relative; border-radius: 14px; overflow: hidden; background: #2a2f2c; }
+.viewfinder svg { display: block; width: 100%; height: auto; }
+.viewfinder .corners { position: absolute; inset: 12px; border: 2px solid transparent; pointer-events: none;
+  background: linear-gradient(#fff,#fff) top left/22px 3px, linear-gradient(#fff,#fff) top left/3px 22px, linear-gradient(#fff,#fff) top right/22px 3px, linear-gradient(#fff,#fff) top right/3px 22px,
+  linear-gradient(#fff,#fff) bottom left/22px 3px, linear-gradient(#fff,#fff) bottom left/3px 22px, linear-gradient(#fff,#fff) bottom right/22px 3px, linear-gradient(#fff,#fff) bottom right/3px 22px; background-repeat: no-repeat; }
+.viewfinder .tag { position: absolute; left: 10px; bottom: 10px; background: rgba(0,0,0,.65); color: #fff; font: 500 11px/1.2 var(--mono); padding: 4px 7px; border-radius: 6px; }
+.viewfinder .scanline { position: absolute; left: 14px; right: 14px; height: 2px; background: #6fe08a; box-shadow: 0 0 8px #6fe08a; top: 14px; }
+@media (prefers-reduced-motion: no-preference) { .viewfinder .scanline { animation: scan 1.6s ease-in-out infinite alternate; } }
+@keyframes scan { to { top: calc(100% - 16px); } }
+.timer { display: flex; justify-content: space-between; font: 500 12px/1.3 var(--mono); color: #b8c8ca; }
+.timer b { color: #6fe08a; font-weight: 500; }
+.scanner .waiting { color: #9fb2b5; } .scanner .waiting b { color: #e9f0f0; }
+.stat { display: flex; justify-content: space-between; font-size: 12px; color: #b8c8ca; border-top: 1px solid #263236; padding-top: 8px; }
+.stat b { color: #e9f0f0; font-weight: 600; }
+.scanner .banner.good { background: #183a22; color: #8fe0a0; }
+.scanner .banner.bad { background: #3d1c15; color: #ff9f88; }
+.scanner .btn-good, .scanner .btn-bad { color: #fff; }
+.pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.pick button { padding: 8px 4px; font-size: 12px; text-align: center; }
+.pick button[aria-pressed="true"] { border-color: var(--bad); background: var(--bad-soft); color: var(--bad); }
+
+/* Log */
+.log { background: var(--log-bg); color: var(--log-ink); border-radius: 10px; padding: 14px 16px; font: 12.5px/1.6 var(--mono); max-height: 280px; overflow: auto; }
+.log h3 { font: 600 11px/1 var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--log-dim); margin: 0 0 10px; }
+.log ol { list-style: none; margin: 0; padding: 0; }
+.log .t { color: var(--log-dim); }
+.log .a { font-weight: 500; }
+.log li.ign { color: #f2b45a; }
+@media (max-width: 460px) { .tablet .screen { height: auto; min-height: 560px; } .split { grid-template-columns: 1fr; } }
+.log .loghd { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+.log .loghd h3 { margin: 0; }
+.log .loghd button { background: transparent; color: var(--log-ink); border-color: var(--log-dim); padding: 5px 10px; font-size: 12px; }
+
+/* Offline badge + tabs */
+.offline { display: inline-block; vertical-align: middle; margin-left: 10px; font: 600 11px/1 var(--body); letter-spacing: .06em; text-transform: uppercase; padding: 5px 8px; border-radius: 999px; background: var(--good-soft); color: var(--good); }
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); }
+.tabs button { border-radius: 8px 8px 0 0; border-bottom: 0; background: transparent; color: var(--muted); font-weight: 600; margin-bottom: -1px; }
+.tabs button[aria-selected="true"] { background: var(--screen); color: var(--ink); border-color: var(--line); border-bottom: 1px solid var(--screen); }
+.panel { display: grid; gap: 18px; }
+.panel[hidden] { display: none !important; }
+.card { background: var(--screen); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card-hd { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+.card-hd h2 { font-family: var(--display); font-size: 18px; letter-spacing: .04em; text-transform: uppercase; margin: 0; }
+
+/* Crazy 8s */
+.c8-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.c8 { background: var(--screen); border: 2px solid var(--ink); border-radius: 8px; padding: 12px; display: grid; gap: 8px; align-content: start; }
+.c8-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-bottom: 2px solid var(--ink); padding-bottom: 6px; font-weight: 700; font-size: 13.5px; }
+.votes { background: var(--accent); color: var(--accent-ink); padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.sketch { background: #fffef8; border: 1px solid #94a3b8; border-radius: 4px; height: 130px; display: grid; place-items: center; padding: 6px; }
+.sketch svg { max-width: 100%; height: auto; font-family: var(--body); }
+.c8 p { margin: 0; font-size: 12.5px; color: var(--muted); }
+.c8 p b { color: var(--ink); }
+
+/* Roleplay */
+.two { display: grid; grid-template-columns: 2fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+.two label { display: block; font-weight: 600; font-size: 13px; margin-top: 10px; }
+textarea { width: 100%; font: 13.5px/1.45 var(--body); color: var(--ink); background: var(--screen-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 4px; resize: vertical; }
+textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.saved { font-size: 12px; color: var(--muted); }
+.bigtime { font: 600 44px/1 var(--mono); text-align: center; padding: 18px 0 14px; font-variant-numeric: tabular-nums; color: var(--accent); }
+.bigtime.done { color: var(--bad); }
+.btnrow { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
+.script { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; }
+.script p { margin: 0 0 6px; }
+.script b { color: var(--ink); }
+
+@media print {
+  .presets, .tabs, .card-hd button, .loghd button, .btnrow { display: none !important; }
+  body { background: #fff; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Clear-Chain live handover <span class="offline">Works offline</span></h1>
+      <p class="sub">One crate, four people, four screens. Each screen only lights up when it is that person's turn. Tap through by hand, or play a scenario.</p>
+      <div class="clock">Delivery day clock: <b id="clock"></b></div>
+    </div>
+    <div class="presets">
+      <button id="playA">Play A: intact delivery</button>
+      <button id="playB">Play B: rush pack flagged at dock</button>
+      <button id="playC">Play C: 1-photo partial claim</button>
+      <button class="solid" id="reset">Reset</button>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" id="tab-sim" aria-controls="panel-sim" aria-selected="true">1. Live 4-actor handover</button>
+    <button role="tab" id="tab-c8" aria-controls="panel-c8" aria-selected="false">2. Crazy 8s (team votes)</button>
+    <button role="tab" id="tab-test" aria-controls="panel-test" aria-selected="false">3. Week 8 roleplay timer &amp; notes</button>
+  </nav>
+
+  <div class="panel" id="panel-sim" role="tabpanel" aria-labelledby="tab-sim">
+  <section class="score" aria-label="Hub scoreboard">
+    <div><div class="k">Delivered intact this month</div><div class="v" id="rate"></div></div>
+    <div><div class="k">Joint packer-driver bonus</div><span class="pill" id="bonus"></span><div class="k" style="margin-top:4px">Target 95%</div></div>
+    <div><div class="k">Driver penalties (Tiago)</div><div class="v" id="pen"></div></div>
+    <div><div class="k">ORD-123 status</div><span class="pill info" id="status"></span></div>
+    <div><div class="k">Damage origin</div><div id="origin" style="font-weight:600;margin-top:4px"></div></div>
+  </section>
+
+  <section class="devices">
+    <div class="device"><div class="role" id="r1"><span class="n">1</span>Farmer · Manuel</div>
+      <div class="frame"><div class="screen" id="farmer"></div></div></div>
+    <div class="device"><div class="role" id="r2"><span class="n">2</span>Hub packer · Fernando</div>
+      <div class="frame tablet"><div class="screen" id="packer"></div></div></div>
+    <div class="device"><div class="role" id="r3"><span class="n">3</span>Driver · Tiago</div>
+      <div class="frame"><div class="screen scanner" id="driver"></div></div></div>
+    <div class="device"><div class="role" id="r4"><span class="n">4</span>Customer · Ines</div>
+      <div class="frame"><div class="screen" id="customer"></div></div></div>
+  </section>
+
+  <section class="log" aria-live="polite">
+    <div class="loghd"><h3>Traceability log (shared by hub, farm report and support)</h3><button id="exportLog">Export log (.txt)</button></div>
+    <ol id="log"></ol>
+  </section>
+  </div>
+
+  <div class="panel" id="panel-c8" role="tabpanel" aria-labelledby="tab-c8" hidden>
+    <div class="card">
+      <div class="card-hd"><h2>Starred HMW</h2><button onclick="window.print()">Print / save PDF</button></div>
+      <p style="margin:0 0 4px;font-weight:600">How might we turn the rushed handover at the loading dock into the moment that protects Tiago, not the one that traps him?</p>
+      <p style="margin:0;color:var(--muted);font-size:13px">Synthesized from the 25 blind dot-votes cast by Dario, Amelia, Monika, Hendell and Ivan.</p>
+    </div>
+
+    <div class="c8-grid">
+      <div class="c8">
+        <div class="c8-top"><span>1. Warehouse pre-seal photo</span><span class="votes">4 dots</span></div>
+        <div class="sketch"><svg width="200" height="110" viewBox="0 0 200 110">
+          <rect x="65" y="35" width="95" height="60" fill="#fef3c7" stroke="#1e293b" stroke-width="2"/>
+          <circle cx="90" cy="55" r="9" fill="#ef4444" stroke="#1e293b" stroke-width="1.5"/>
+          <circle cx="112" cy="55" r="9" fill="#ef4444" stroke="#1e293b" stroke-width="1.5"/>
+          <rect x="130" y="65" width="22" height="22" fill="#fff" stroke="#1e293b" stroke-width="1.5"/>
+          <text x="134" y="80" font-size="8" font-weight="bold">PK08</text>
+          <rect x="18" y="20" width="32" height="54" rx="4" fill="#dbeafe" stroke="#1e293b" stroke-width="2"/>
+          <line x1="52" y1="45" x2="75" y2="50" stroke="#16a34a" stroke-width="2" stroke-dasharray="3,2"/>
+          <text x="15" y="92" font-size="9" font-weight="bold">Snap before seal</text>
+        </svg></div>
+        <p><b>Dario 2, Ivan 2 · SCAMPER Reverse (R1):</b> Packer snaps a photo before closing the crate. Reverses the burden of proof with 0 seconds of driver time.</p>
+      </div>
+
+      <div class="c8">
+        <div class="c8-top"><span>2. Clear-lid crate + cool pack</span><span class="votes">4 dots</span></div>
+        <div class="sketch"><svg width="200" height="110" viewBox="0 0 200 110">
+          <rect x="30" y="25" width="140" height="70" fill="#f8fafc" stroke="#1e293b" stroke-width="2"/>
+          <rect x="30" y="25" width="140" height="20" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" stroke-dasharray="4,2"/>
+          <circle cx="60" cy="55" r="8" fill="#ef4444"/><circle cx="82" cy="55" r="8" fill="#ef4444"/>
+          <ellipse cx="65" cy="80" rx="14" ry="8" fill="#a16207"/><ellipse cx="100" cy="80" rx="14" ry="8" fill="#a16207"/>
+          <rect x="135" y="48" width="28" height="40" fill="#38bdf8" stroke="#1e293b" stroke-width="1.5"/>
+          <text x="139" y="70" font-size="8" font-weight="bold">COOL</text>
+          <text x="42" y="18" font-size="9" font-weight="bold">Transparent top lid</text>
+        </svg></div>
+        <p><b>Monika 2, Amelia 2 · SCAMPER Eliminate (E2) + #28:</b> The clear lid lets Tiago see the stacking without unsealing; the cool pack prevents heat spoilage.</p>
+      </div>
+
+      <div class="c8">
+        <div class="c8-top"><span>3. Farm ripe vs. firm sort</span><span class="votes">3 dots</span></div>
+        <div class="sketch"><svg width="200" height="110" viewBox="0 0 200 110">
+          <rect x="18" y="40" width="72" height="52" fill="#fee2e2" stroke="#b91c1c" stroke-width="2"/>
+          <text x="26" y="62" font-size="10" font-weight="bold" fill="#b91c1c">RIPE (RED)</text>
+          <text x="26" y="76" font-size="8">Soft tomatoes</text>
+          <rect x="110" y="40" width="72" height="52" fill="#e2e8f0" stroke="#334155" stroke-width="2"/>
+          <text x="118" y="62" font-size="10" font-weight="bold" fill="#334155">FIRM (GREY)</text>
+          <text x="118" y="76" font-size="8">Heavy potatoes</text>
+          <text x="40" y="24" font-size="9" font-weight="bold">Pre-sorted at Manuel's farm</text>
+        </svg></div>
+        <p><b>Dario 1, Amelia 1, Ivan 1 · Ideas #22, #18, #24:</b> Farmers separate soft ripe fruit from heavy firm items at the farm in colour-coded crates.</p>
+      </div>
+
+      <div class="c8">
+        <div class="c8-top"><span>4. 3-sec two-tap QR scan</span><span class="votes">1 dot + HMW</span></div>
+        <div class="sketch"><svg width="200" height="110" viewBox="0 0 200 110">
+          <rect x="65" y="10" width="70" height="90" rx="8" fill="#1e293b"/>
+          <rect x="71" y="20" width="58" height="70" fill="#ffffff"/>
+          <rect x="76" y="28" width="48" height="22" rx="3" fill="#15803d"/>
+          <text x="86" y="43" font-size="10" font-weight="bold" fill="#fff">TAP OK</text>
+          <rect x="76" y="56" width="48" height="22" rx="3" fill="#b91c1c"/>
+          <text x="80" y="71" font-size="9" font-weight="bold" fill="#fff">TAP FLAG</text>
+        </svg></div>
+        <p><b>Amelia 1 · SCAMPER Substitute (S1):</b> Tiago scans the crate QR and taps OK or FLAG in 3 seconds during his protected +2 min buffer.</p>
+      </div>
+
+      <div class="c8">
+        <div class="c8-top"><span>5. Shared intact scoreboard</span><span class="votes">3 dots</span></div>
+        <div class="sketch"><svg width="200" height="110" viewBox="0 0 200 110">
+          <rect x="20" y="15" width="160" height="80" rx="4" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+          <text x="42" y="38" font-size="10" font-weight="bold" fill="#94a3b8">DELIVERED INTACT</text>
+          <text x="68" y="66" font-size="22" font-weight="bold" fill="#4ade80">98.0%</text>
+          <text x="34" y="84" font-size="9" fill="#f8fafc">Packer PK-08 + Driver Tiago</text>
+        </svg></div>
+        <p><b>Dario 1, Monika 2 · SCAMPER Combine (C2) + #8, #27:</b> Links warehouse KPIs and joint team bonuses directly to intact doorstep delivery.</p>
+      </div>
+
+      <div class="c8">
+        <div class="c8-top"><span>6. Under review + pre-photo</span><span class="votes">2 dots</span></div>
+        <div class="sketch"><svg width="200" height="110" viewBox="0 0 200 110">
+          <rect x="30" y="15" width="140" height="80" rx="6" fill="#eff6ff" stroke="#1d4ed8" stroke-width="2"/>
+          <text x="42" y="36" font-size="9" font-weight="bold" fill="#1e3a8a">ORDER #123 STATUS:</text>
+          <rect x="42" y="44" width="116" height="22" rx="3" fill="#fef3c7" stroke="#b45309"/>
+          <text x="52" y="59" font-size="9" font-weight="bold" fill="#b45309">UNDER REVIEW (HUB)</text>
+          <text x="42" y="82" font-size="8" fill="#334155">Zero automatic driver blame</text>
+        </svg></div>
+        <p><b>Monika 1, Ivan 1 · Idea #11 + SCAMPER R3:</b> App defaults to "Under review" instead of blaming Tiago; customer gets a pre-arrival photo 5 min before.</p>
+      </div>
+
+      <div class="c8">
+        <div class="c8-top"><span>7. 1-photo partial refund</span><span class="votes">4 dots</span></div>
+        <div class="sketch"><svg width="200" height="110" viewBox="0 0 200 110">
+          <rect x="25" y="18" width="150" height="74" rx="6" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+          <circle cx="52" cy="55" r="14" fill="#ef4444"/>
+          <text x="76" y="45" font-size="9" font-weight="bold" fill="#14532d">1 bruised tomato photo</text>
+          <text x="76" y="62" font-size="10" font-weight="bold" fill="#15803d">+EUR 1.50 next box</text>
+          <text x="76" y="77" font-size="8" fill="#1e293b">Full box kept (no rejection)</text>
+        </svg></div>
+        <p><b>Hendell 2, Dario 1, Ivan 1 · Brainstorm #14:</b> Ines keeps her box and sends 1 photo for partial credit, so Manuel and Tiago don't lose the whole order.</p>
+      </div>
+
+      <div class="c8">
+        <div class="c8-top"><span>8. Farmer flyer &amp; 4-week plan</span><span class="votes">4 dots</span></div>
+        <div class="sketch"><svg width="200" height="110" viewBox="0 0 200 110">
+          <rect x="25" y="20" width="70" height="70" fill="#fef3c7" stroke="#b45309" stroke-width="1.5"/>
+          <text x="32" y="42" font-size="8" font-weight="bold">Grown by</text>
+          <text x="32" y="54" font-size="9" font-weight="bold" fill="#b45309">Manuel</text>
+          <text x="32" y="68" font-size="7">Lisbon West</text>
+          <rect x="105" y="20" width="70" height="70" fill="#f1f5f9" stroke="#334155" stroke-width="1.5"/>
+          <text x="112" y="40" font-size="8" font-weight="bold">4-week box</text>
+          <text x="112" y="55" font-size="8">120 confirmed</text>
+          <text x="112" y="70" font-size="7" fill="#15803d">1 skip allowed</text>
+        </svg></div>
+        <p><b>Hendell 3, Amelia 1 · Ideas #16, #17, #23, #4:</b> A story flyer builds empathy; the 4-week plan and weekly damage report give Manuel stable income.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-test" role="tabpanel" aria-labelledby="tab-test" hidden>
+    <div class="two">
+      <div class="card">
+        <div class="card-hd"><h2>Week 8 roleplay observation sheet</h2><button class="solid" id="exportNotes">Download notes (.txt)</button></div>
+        <div class="saved" id="savedNote">Saved on this laptop as you type.</div>
+        <label for="note-r1">Round 1 (Driver Tiago: 3-sec dock scan &amp; clear-lid check): what broke down or worked?</label>
+        <textarea id="note-r1" rows="4">Tiago spotted the crushed tomatoes through the clear lid in 2 seconds and tapped FLAG. Zero-penalty banner removed hesitation.</textarea>
+        <label for="note-r2">Round 2 (Customer Ines: pre-arrival photo &amp; 1-photo partial claim): what questions or surprises came up?</label>
+        <textarea id="note-r2" rows="4">Ines liked receiving the intact photo 5 minutes before arrival so she didn't have to inspect the bag in front of a rushed driver. 1-photo claim stopped her from cancelling.</textarea>
+        <label for="note-r3">Round 3 (Farmer Manuel &amp; Packer Fernando: shared KPI &amp; ripe/firm crates): pivot, iterate or proceed?</label>
+        <textarea id="note-r3" rows="4">ITERATE &amp; PROCEED: Cross-checking Ines's 1-photo claim against Fernando's pre-seal photo pinpoints whether damage happened in the hub or on Lisbon roads.</textarea>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><h2>5-minute roleplay timer</h2></div>
+        <div class="bigtime" id="timer">05:00</div>
+        <div class="btnrow">
+          <button class="btn-good" id="tStart">Start</button>
+          <button id="tPause">Pause</button>
+          <button class="solid" id="tReset">Reset 5:00</button>
+        </div>
+        <div class="script">
+          <p><b>Classroom demo script (2 min)</b></p>
+          <p>1. On tab 1, press <em>Play B</em> to show a rushed hub pack caught by Tiago at the dock in 3 seconds, with zero driver penalty.</p>
+          <p>2. Press <em>Play C</em> to show Ines claiming EUR 1.50 for 1 bruised tomato without rejecting Manuel's crate.</p>
+          <p>3. Press <em>Export log</em> to hand in the traceability trail.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const S = { FORECAST: 0, SORTED: 1, PACKED: 2, LOADED: 3, FLAGGED: 4, DELIVERED: 5 };
+const BASE_TOTAL = 50, BASE_INTACT = 49, PACKER = "PK-08 (Fernando)";
+const RED = "Ripe / Fragile (Red Clear-Lid)", GREY = "Firm / Heavy (Grey Crate)";
+const ITEMS = [["Potatoes, Agria", "2 kg"], ["Carrots", "1 kg"], ["Cucumbers", "2 pcs"], ["Tomatoes, ripe coração-de-boi", "600 g"]];
+let st, ui, playing = false, bufferTimer = null;
+
+function fresh() {
+  st = {
+    total: BASE_TOTAL, intact: BASE_INTACT, penalties: 0, mins: 6 * 60 + 40,
+    stage: S.FORECAST, confirmed: false, crate: null, stackingOk: true, coolPack: true, sealPhoto: false,
+    packs: 0, scan: "PENDING", status: "FORECAST_SENT", origin: "None", refund: 0,
+    arrivalPhoto: false, claimItem: null, bufferLeft: 120,
+    farmerMsgs: [], custMsgs: [], log: []
+  };
+  ui = { stack: "std", cool: true, photo: false, claimOpen: false, claimPick: null };
+  farmerMsg("in", "Clear-Chain Lisbon: Forecast for week 46 is 120 boxes (4-week plan: 120 / 120 / 130 / 125). Reply 1 to confirm.", "Mon 08:00");
+  log("SYSTEM", "Monday SMS forecast sent to Manuel (Lisbon West Farm): 120 boxes for week 46.", "Mon 08:00");
+  custMsg("sys", "Today");
+  custMsg("in", "Bom dia Ines! Your Tuesday box ORD-123 is being prepared. Delivery window 10:00–11:00.");
+}
+const hhmm = () => String(Math.floor(st.mins / 60)).padStart(2, "0") + ":" + String(st.mins % 60).padStart(2, "0");
+const tick = m => { st.mins += m; };
+function log(actor, text, t) { st.log.push({ t: t || hhmm(), actor, text, ign: text.startsWith("Ignored") }); }
+function farmerMsg(dir, text, t) { st.farmerMsgs.push({ dir, text, t: t || hhmm() }); }
+function custMsg(dir, text, extra) { st.custMsgs.push({ dir, text, t: hhmm(), ...extra }); }
+const rate = () => Math.round(st.intact / st.total * 1000) / 10;
+
+/* ---------- Actions (same rules as the Python prototype) ---------- */
+function confirmForecast() { if (st.confirmed) return; st.confirmed = true; farmerMsg("out", "1", "Mon 08:04"); farmerMsg("in", "Thanks Manuel. 120 boxes locked for week 46. Payment on Friday.", "Mon 08:04"); log("FARM (Manuel)", "Confirmed weekly forecast: 120 boxes.", "Mon 08:04"); }
+function sort(category) {
+  if (st.stage >= S.PACKED) return log("SYSTEM", "Ignored: crate is already packed.");
+  tick(5); st.crate = category; st.stage = S.SORTED; st.status = "SORTED_AT_FARM";
+  farmerMsg("out", category === RED ? "Red clear-lid crate: tomatoes, ripe" : "Grey crate: firm and heavy produce");
+  farmerMsg("in", "Crate logged for ORD-123. Story flyer printed with your farm photo.");
+  log("FARM (Manuel)", `Pre-sorted produce into '${category}' crate with story flyer.`);
+  tick(55);
+}
+function pack() {
+  if (st.stage < S.SORTED) return log("SYSTEM", "Ignored: farm has not sorted the crate yet.");
+  if (st.stage === S.LOADED || st.stage === S.DELIVERED) return log("SYSTEM", "Ignored: crate has already left the dock.");
+  const repack = st.stage === S.FLAGGED;
+  tick(repack ? 6 : 4);
+  Object.assign(st, { stackingOk: ui.stack === "std", coolPack: ui.cool, sealPhoto: ui.photo, stage: S.PACKED, status: "SEALED_AT_HUB", scan: "PENDING", bufferLeft: 120 });
+  st.packs++;
+  const desc = st.stackingOk ? "Heavy items on bottom, tomatoes on top" : "RUSHED: potatoes placed on top of ripe tomatoes";
+  log(`HUB (${PACKER})`, `${repack ? "Repacked" : "Packed"} and sealed clear-lid crate (${desc}; cool pack ${st.coolPack ? "yes" : "no"}; ${st.sealPhoto ? "pre-seal photo logged" : "no pre-seal photo"}).`);
+  startBuffer();
+}
+function scan(action) {
+  if (st.stage !== S.PACKED) return log("SYSTEM", st.stage === S.FLAGGED ? "Ignored: flagged crate must be repacked first." : "Ignored: no sealed crate at the dock.");
+  stopBuffer(); tick(1);
+  if (action === "OK") {
+    Object.assign(st, { scan: "SCANNED_OK (3 s)", status: "IN_TRANSIT", stage: S.LOADED });
+    log("DRIVER (Tiago)", "3-second QR scan at dock: tapped OK. Crate loaded, Route 4, stop 3 of 11.");
+    tick(38);
+    if (st.sealPhoto) {
+      st.arrivalPhoto = true;
+      custMsg("in", "Your box is 5 minutes away. This is how it left our hub this morning.", { photo: true });
+      log("WHATSAPP BOT", "Sent pre-arrival photo of the sealed crate to Ines, 5 min before the doorbell.");
+    } else {
+      custMsg("in", "Your box is 5 minutes away.");
+    }
+    tick(5);
+    custMsg("sys", "Delivered " + hhmm());
+    custMsg("in", "Your box was handed over by Tiago. Is everything OK?");
+  } else {
+    Object.assign(st, { scan: "FLAGGED_AT_DOCK (3 s)", status: "UNDER_REVIEW", stage: S.FLAGGED, origin: `Warehouse packing (${PACKER})` });
+    st.total += 1;
+    log("DRIVER (Tiago)", `3-second QR scan at dock: tapped FLAG. Crate refused before loading. Driver penalty stays ${st.penalties}.`);
+    log("HUB SCOREBOARD", `ORD-123 marked UNDER REVIEW. Traced to ${PACKER}. Repack requested.`);
+    custMsg("in", "Small delay: we spotted a packing problem at our dock and are repacking your box. New window 10:30–11:30.");
+  }
+}
+function accept() {
+  if (st.stage !== S.LOADED) return log("SYSTEM", "Ignored: box has not been delivered.");
+  tick(2); st.stage = S.DELIVERED; st.status = "DELIVERED_INTACT"; st.total++; st.intact++;
+  custMsg("out", "All good, obrigada! Loved the note from Manuel.");
+  custMsg("in", "Great. Enjoy your box. See you next Tuesday.");
+  log("CUSTOMER (Ines)", "Accepted full box intact. Read Manuel's farm flyer. Subscription retained.");
+  farmerReport();
+}
+function claim(item) {
+  if (st.stage !== S.LOADED) return log("SYSTEM", "Ignored: box has not been delivered.");
+  tick(3); st.stage = S.DELIVERED; st.status = "DELIVERED_1_PHOTO_CLAIM"; st.total++; st.refund = 1.5; st.claimItem = item;
+  st.origin = !st.stackingOk ? `Warehouse packing (${PACKER})` : "Urban road transit (Route 4 cobblestones)";
+  ui.claimOpen = false;
+  custMsg("out", `Everything else is fine, but the ${item.toLowerCase()} got bruised.`, { bruise: item });
+  tick(1);
+  custMsg("in", "Sorry about that. EUR 1.50 credit added to your next box. Keep the rest, no need to return anything.");
+  log("CUSTOMER (Ines)", `Kept the box and sent 1 photo of bruised ${item.toLowerCase()}. EUR 1.50 credit on next order.`);
+  log("SUPPORT", `Claim origin: ${st.origin}.`);
+  farmerReport();
+}
+function farmerReport() {
+  tick(1);
+  const text = st.status === "DELIVERED_INTACT"
+    ? `Weekly report: ORD-123 delivered intact. Full sale counted for your farm.`
+    : `Weekly report: ORD-123 full sale kept. 1 item credited to the customer. Bruise origin: ${st.origin}. Not your harvest.`;
+  farmerMsg("in", text);
+  log("FARMER REPORT (Manuel)", text);
+}
+function startBuffer() {
+  stopBuffer();
+  bufferTimer = setInterval(() => { if (st.bufferLeft > 0) { st.bufferLeft--; const el = document.getElementById("buf"); if (el) el.textContent = fmtBuf(); } }, 1000);
+}
+function stopBuffer() { if (bufferTimer) clearInterval(bufferTimer); bufferTimer = null; }
+const fmtBuf = () => Math.floor(st.bufferLeft / 60) + ":" + String(st.bufferLeft % 60).padStart(2, "0");
+
+/* ---------- Crate drawings (side view through the clear lid) ---------- */
+function crateSVG({ stackingOk = true, red = true, cool = false, bruise = null, closeup = false } = {}) {
+  const tomato = (x, y, squash) => squash
+    ? `<ellipse cx="${x}" cy="${y + 4}" rx="13" ry="6" fill="#c8402a"/><ellipse cx="${x - 3}" cy="${y + 4}" rx="5" ry="2.5" fill="#7d1f12"/>`
+    : `<circle cx="${x}" cy="${y}" r="10" fill="#d9432b"/><path d="M${x - 4} ${y - 9} l4 3 l4 -3" stroke="#3f7d2c" stroke-width="2" fill="none"/>`;
+  const potato = (x, y) => `<ellipse cx="${x}" cy="${y}" rx="14" ry="9" fill="#b98a52"/><circle cx="${x - 4}" cy="${y - 2}" r="1.3" fill="#7a5630"/><circle cx="${x + 5}" cy="${y + 2}" r="1.3" fill="#7a5630"/>`;
+  const carrot = (x, y) => `<path d="M${x - 16} ${y} L${x + 14} ${y - 4} L${x + 14} ${y + 4} Z" fill="#e47a26"/><path d="M${x + 14} ${y} l6 -4 M${x + 14} ${y} l6 4" stroke="#3f7d2c" stroke-width="2"/>`;
+  const cuc = (x, y) => `<rect x="${x - 18}" y="${y - 5}" width="36" height="10" rx="5" fill="#3c7a3a"/>`;
+  if (closeup) {
+    const item = bruise || "Tomatoes";
+    const shape = item === "Tomatoes" ? `<circle cx="100" cy="70" r="42" fill="#d9432b"/><ellipse cx="88" cy="80" rx="16" ry="11" fill="#7d1f12" opacity=".8"/><path d="M86 30 l14 9 l14 -9" stroke="#3f7d2c" stroke-width="4" fill="none"/>`
+      : item === "Potatoes" ? `<ellipse cx="100" cy="70" rx="55" ry="36" fill="#b98a52"/><ellipse cx="112" cy="78" rx="18" ry="10" fill="#5e3f1f" opacity=".8"/>`
+      : `<path d="M40 70 L160 52 L160 88 Z" fill="#e47a26"/><path d="M110 60 l10 20" stroke="#6b3510" stroke-width="5"/>`;
+    return `<svg viewBox="0 0 200 140" role="img" aria-label="Photo of bruised ${item.toLowerCase()}"><rect width="200" height="140" fill="#cdbfa8"/><rect y="100" width="200" height="40" fill="#b8a98f"/>${shape}</svg>`;
+  }
+  const rim = red ? "#c0392b" : "#6b7378";
+  let layers = "";
+  const xs = [38, 70, 102, 134, 166];
+  if (stackingOk) {
+    layers += xs.map(x => potato(x, 112)).join("") + carrot(60, 94) + carrot(120, 92) + cuc(160, 94) + xs.map(x => tomato(x, 74)).join("");
+  } else {
+    layers += xs.map(x => tomato(x, 110, true)).join("") + carrot(60, 98) + cuc(150, 98) + xs.map(x => potato(x, 80)).join("") + potato(86, 64) + potato(118, 64);
+  }
+  return `<svg viewBox="0 0 200 140" role="img" aria-label="${stackingOk ? "Crate packed heavy bottom, tomatoes on top" : "Crate with potatoes crushing tomatoes"}">
+    <rect width="200" height="140" fill="#3a3f3c"/>
+    <rect x="14" y="40" width="172" height="92" rx="4" fill="#eef1ef"/>
+    ${cool ? `<rect x="20" y="118" width="160" height="8" rx="2" fill="#5aa0d8"/>` : ""}
+    ${layers}
+    <rect x="14" y="40" width="172" height="92" rx="4" fill="none" stroke="${rim}" stroke-width="6"/>
+    <rect x="10" y="30" width="180" height="12" rx="3" fill="#cfe6f2" opacity=".75" stroke="${rim}" stroke-width="2"/>
+    <rect x="150" y="12" width="30" height="30" fill="#fff"/><path d="M154 16h8v8h-8zM168 16h8v8h-8zM154 30h8v8h-8zM166 28h4v4h-4zM172 34h4v4h-4z" fill="#111"/>
+  </svg>`;
+}
+
+/* ---------- Screens ---------- */
+const statusBar = (light) => `<div class="status"${light ? ' style="color:#e9f0f0"' : ""}><span>${hhmm()}</span><span>5G ▮▮▮ 82%</span></div>`;
+const bubbles = list => list.map(m => m.dir === "sys" ? `<div class="sys">${m.text}</div>` :
+  `<div class="msg ${m.dir}">${m.photo ? crateSVG({ stackingOk: st.stackingOk, red: st.crate !== GREY, cool: st.coolPack }) : ""}${m.bruise ? crateSVG({ closeup: true, bruise: m.bruise }) : ""}${esc(m.text)}<span class="time">${m.t}</span></div>`).join("");
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+function renderFarmer() {
+  const canSort = st.stage <= S.SORTED;
+  document.getElementById("farmer").innerHTML = `${statusBar()}
+    <div class="appbar"><div class="avatar" style="background:#1d4e5f">CC</div><div><div class="t">Clear-Chain Lisbon</div><div class="s">SMS · Lisbon West Farm</div></div></div>
+    <div class="body chat" id="fbody">${bubbles(st.farmerMsgs)}</div>
+    <div class="composer">
+      ${!st.confirmed ? `<button class="btn-info" data-a="confirm" ${playing ? "disabled" : ""}>Reply 1: confirm 120 boxes</button>` : ""}
+      ${canSort ? `<div class="k">Sort today's harvest for ORD-123</div><div class="row2">
+        <button data-a="sortRed" ${playing ? "disabled" : ""} style="border-color:#c0392b">Red clear-lid<br><small>ripe / fragile</small></button>
+        <button data-a="sortGrey" ${playing ? "disabled" : ""}>Grey crate<br><small>firm / heavy</small></button></div>` : `<div class="k" style="text-align:center">Crate handed to hub</div>`}
+    </div>`;
+}
+
+function renderPacker() {
+  const el = document.getElementById("packer");
+  const top = `${statusBar()}<div class="appbar"><div class="avatar" style="background:#7a5630">PK</div><div><div class="t">Hub pack station 3</div><div class="s">Packer PK-08 · Fernando · Shift 06:00–14:00</div></div></div>`;
+  if (st.stage < S.SORTED) { el.innerHTML = top + `<div class="body"><div class="waiting"><b>Waiting for farm crate</b>ORD-123 arrives once Manuel sorts it.</div></div>`; return; }
+  const locked = st.stage === S.PACKED || st.stage === S.LOADED || st.stage === S.DELIVERED;
+  const flagged = st.stage === S.FLAGGED;
+  el.innerHTML = top + `<div class="body">
+    ${flagged ? `<div class="banner bad"><b>Returned from dock.</b> Tiago flagged ORD-123: tomatoes under heavy items. Repack before 10:00.</div>` : ""}
+    ${locked ? `<div class="banner good">Sealed and at the dock. QR label printed.</div>` : ""}
+    <div class="order-card"><div class="hd"><span class="id">ORD-123 · Ines, Campo de Ourique</span><span class="pill ${st.crate === GREY ? "info" : "bad"}" style="margin:0">${st.crate === GREY ? "Grey crate" : "Red clear-lid"}</span></div>
+      <ul class="items">${ITEMS.map(([n, w]) => `<li><span>${n}</span><span class="w">${w}</span></li>`).join("")}</ul></div>
+    <div class="split">
+      <div style="display:grid;gap:8px;min-width:0">
+        <div class="k">Stacking</div>
+        <div class="seg"><button data-a="stackStd" aria-pressed="${ui.stack === "std"}" ${locked || playing ? "disabled" : ""}>Heavy bottom</button><button data-a="stackRush" aria-pressed="${ui.stack === "rush"}" ${locked || playing ? "disabled" : ""}>Rush</button></div>
+        <div>
+          <div class="tog"><span>Cool pack<small>Idea #28, above 22 °C</small></span><label class="switch"><input type="checkbox" id="coolSw" ${ui.cool ? "checked" : ""} ${locked || playing ? "disabled" : ""} aria-label="Cool pack"><span></span></label></div>
+          <div class="tog"><span>Pre-seal photo<small>Sent to customer later</small></span>${ui.photo ? `<span class="pill good" style="margin:0">Taken</span>` : `<button data-a="photo" ${locked || playing ? "disabled" : ""} style="padding:6px 10px">Take</button>`}</div>
+        </div>
+      </div>
+      <div class="preview">${crateSVG({ stackingOk: ui.stack === "std", red: st.crate !== GREY, cool: ui.cool })}<div class="cap">Live view: what the driver will see through the lid</div></div>
+    </div>
+  </div>
+  <div class="composer"><button class="solid big" data-a="seal" ${locked || playing ? "disabled" : ""}>${flagged ? "Repack, seal and print QR" : "Seal crate and print QR"}</button></div>`;
+}
+
+function renderDriver() {
+  const el = document.getElementById("driver");
+  const top = `${statusBar(true)}<div class="appbar"><div class="avatar" style="background:#2f7a3e">T</div><div><div class="t">Dock scan · Van 4</div><div class="s">Tiago · Route 4 · 11 stops</div></div></div>`;
+  let body;
+  if (st.stage < S.PACKED) body = `<div class="body"><div class="waiting"><b>No crate at the dock</b>Waiting for the hub to seal ORD-123.</div></div>`;
+  else if (st.stage === S.PACKED) body = `<div class="body">
+      <div class="viewfinder">${crateSVG({ stackingOk: st.stackingOk, red: st.crate !== GREY, cool: st.coolPack })}<div class="corners"></div><div class="scanline"></div><div class="tag">QR read · ORD-123 · ${st.crate === GREY ? "GREY" : "RED / FRAGILE"}</div></div>
+      <div class="timer"><span>Protected inspection buffer</span><b id="buf">${fmtBuf()}</b></div>
+      <div style="font-size:12px;color:#b8c8ca">Look through the clear lid. Heavy items must sit under the tomatoes.</div>
+    </div>
+    <div class="composer" style="background:#0b0f10;border-color:#263236">
+      <button class="btn-good big" data-a="ok" ${playing ? "disabled" : ""}>OK · load van</button>
+      <button class="btn-bad big" data-a="flag" ${playing ? "disabled" : ""}>FLAG · refuse crate</button>
+      <div class="stat"><span>Penalty for flagging</span><b>0</b></div>
+    </div>`;
+  else if (st.stage === S.FLAGGED) body = `<div class="body"><div class="banner bad">Crate refused and sent back to PK-08. Not your fault: penalty 0.</div><div class="waiting"><b>Waiting for repack</b>You'll be pinged when ORD-123 is resealed.</div>
+      <div class="stat"><span>Penalties this month</span><b>${st.penalties}</b></div></div>`;
+  else body = `<div class="body"><div class="banner good">ORD-123 loaded. Stop 3 of 11, Campo de Ourique.</div>${st.stage === S.DELIVERED ? `<div class="banner good">Handed to Ines at ${st.custMsgs.find(m => m.text.startsWith("Delivered"))?.text.slice(10) || ""}.</div>` : ""}
+      <div class="stat"><span>Penalties this month</span><b>${st.penalties}</b></div><div class="stat"><span>Scans today</span><b>${st.packs}</b></div></div>`;
+  el.innerHTML = top + body;
+}
+
+function renderCustomer() {
+  const el = document.getElementById("customer");
+  let comp = `<div class="k" style="text-align:center">${st.stage === S.DELIVERED ? (st.refund ? "Credit EUR 1.50 on next box" : "Thanks for ordering") : "Box on its way"}</div>`;
+  if (st.stage === S.LOADED) {
+    comp = ui.claimOpen
+      ? `<div class="k">Which item is damaged? (1 photo)</div><div class="pick">${["Tomatoes", "Potatoes", "Carrots"].map(i => `<button data-a="pick" data-i="${i}" aria-pressed="${ui.claimPick === i}" ${playing ? "disabled" : ""}>${i}</button>`).join("")}</div>
+         <button class="btn-bad" data-a="sendClaim" ${!ui.claimPick || playing ? "disabled" : ""}>Send photo</button><button data-a="cancelClaim" ${playing ? "disabled" : ""}>Back</button>`
+      : `<button class="btn-good big" data-a="accept" ${playing ? "disabled" : ""}>Everything's fine</button><button class="btn-info" data-a="openClaim" ${playing ? "disabled" : ""}>Report 1 bruised item</button>`;
+  }
+  el.innerHTML = `${statusBar()}
+    <div class="appbar"><div class="avatar" style="background:#2f7a3e">CC</div><div><div class="t">Clear-Chain Lisbon</div><div class="s">Business chat · WhatsApp in production</div></div></div>
+    <div class="body chat" id="cbody">${bubbles(st.custMsgs)}</div>
+    <div class="composer">${comp}</div>`;
+}
+
+function render() {
+  const r = rate(), bonus = r >= 95;
+  document.getElementById("clock").textContent = "Tue " + hhmm();
+  document.getElementById("rate").innerHTML = `${r.toFixed(1)}% <small>${st.intact} of ${st.total}</small>`;
+  const b = document.getElementById("bonus"); b.textContent = bonus ? "Active" : "At risk"; b.className = "pill " + (bonus ? "good" : "bad");
+  document.getElementById("pen").textContent = st.penalties;
+  const s = document.getElementById("status"); s.textContent = st.status.replaceAll("_", " ");
+  s.className = "pill " + (st.stage === S.FLAGGED ? "bad" : st.status === "DELIVERED_INTACT" ? "good" : st.refund ? "warn" : "info");
+  document.getElementById("origin").textContent = st.origin;
+  renderFarmer(); renderPacker(); renderDriver(); renderCustomer();
+  const turn = { 0: 1, 1: 2, 2: 3, 3: 4, 4: 2, 5: 0 }[st.stage];
+  for (let i = 1; i <= 4; i++) document.getElementById("r" + i).classList.toggle("turn", i === turn);
+  for (const id of ["fbody", "cbody"]) { const e = document.getElementById(id); if (e) e.scrollTop = e.scrollHeight; }
+  const ol = document.getElementById("log"); ol.textContent = "";
+  for (const e of st.log) { const li = document.createElement("li"); if (e.ign) li.className = "ign"; li.innerHTML = `<span class="t">[${e.t}]</span> <span class="a"></span>: <span></span>`; li.children[1].textContent = e.actor; li.children[2].textContent = e.text; ol.appendChild(li); }
+  ol.parentElement.scrollTop = ol.parentElement.scrollHeight;
+  for (const id of ["playA", "playB", "playC", "reset"]) document.getElementById(id).disabled = playing;
+}
+
+/* ---------- Input ---------- */
+document.addEventListener("click", e => {
+  const btn = e.target.closest("[data-a]"); if (!btn || btn.disabled) return;
+  const a = btn.dataset.a;
+  ({
+    confirm: confirmForecast, sortRed: () => sort(RED), sortGrey: () => sort(GREY),
+    stackStd: () => ui.stack = "std", stackRush: () => ui.stack = "rush", photo: () => ui.photo = true, seal: pack,
+    ok: () => scan("OK"), flag: () => scan("FLAG"),
+    accept, openClaim: () => { ui.claimOpen = true; ui.claimPick = null; }, cancelClaim: () => ui.claimOpen = false,
+    pick: () => ui.claimPick = btn.dataset.i, sendClaim: () => claim(ui.claimPick)
+  })[a]?.();
+  render();
+});
+document.addEventListener("change", e => { if (e.target.id === "coolSw") { ui.cool = e.target.checked; render(); } });
+
+/* ---------- Scenarios (played step by step so each screen updates in turn) ---------- */
+const wait = ms => new Promise(r => setTimeout(r, ms));
+async function play(steps) {
+  stopBuffer(); fresh(); playing = true; render();
+  for (const s of steps) { await wait(900); s(); render(); }
+  playing = false; render();
+}
+const SC = {
+  A: [confirmForecast, () => sort(RED), () => { ui.stack = "std"; ui.cool = true; ui.photo = true; }, pack, () => scan("OK"), accept],
+  B: [confirmForecast, () => sort(RED), () => { ui.stack = "rush"; ui.cool = true; ui.photo = true; }, pack, () => scan("FLAG")],
+  C: [confirmForecast, () => sort(RED), () => { ui.stack = "std"; ui.cool = true; ui.photo = true; }, pack, () => scan("OK"), () => { ui.claimOpen = true; }, () => { ui.claimPick = "Tomatoes"; }, () => claim("Tomatoes")]
+};
+document.getElementById("playA").onclick = () => play(SC.A);
+document.getElementById("playB").onclick = () => play(SC.B);
+document.getElementById("playC").onclick = () => play(SC.C);
+document.getElementById("reset").onclick = () => { stopBuffer(); fresh(); render(); };
+
+/* ---------- Tabs ---------- */
+const TABS = ["sim", "c8", "test"];
+function showTab(tab) {
+  for (const id of TABS) {
+    document.getElementById("panel-" + id).hidden = id !== tab;
+    document.getElementById("tab-" + id).setAttribute("aria-selected", id === tab);
+  }
+  try { localStorage.setItem("clearchain_tab", tab); } catch (e) {}
+}
+for (const id of TABS) document.getElementById("tab-" + id).onclick = () => showTab(id);
+
+/* ---------- Offline exports (.txt saved straight to Downloads) ---------- */
+function downloadText(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+document.getElementById("exportLog").onclick = () => downloadText("clear_chain_traceability_log.txt",
+  ["CLEAR-CHAIN TRACEABILITY LOG", "Order ORD-123 · status " + st.status.replaceAll("_", " ") + " · damage origin " + st.origin, ""]
+    .concat(st.log.map(e => `[${e.t}] ${e.actor}: ${e.text}`)).join("\n"));
+
+/* ---------- Roleplay notes (kept in this browser between sessions) ---------- */
+const NOTES = ["note-r1", "note-r2", "note-r3"];
+function saveNotes() {
+  try { for (const id of NOTES) localStorage.setItem("clearchain_" + id, document.getElementById(id).value); document.getElementById("savedNote").textContent = "Saved on this laptop at " + new Date().toTimeString().slice(0, 5) + "."; }
+  catch (e) { document.getElementById("savedNote").textContent = "This browser can't save notes. Use Download notes before closing."; }
+}
+for (const id of NOTES) {
+  const el = document.getElementById(id);
+  try { const v = localStorage.getItem("clearchain_" + id); if (v !== null) el.value = v; } catch (e) {}
+  el.addEventListener("input", saveNotes);
+}
+document.getElementById("exportNotes").onclick = () => downloadText("clear_chain_week8_observations.txt", [
+  "CLEAR-CHAIN · WEEK 8 ROLEPLAY OBSERVATION SHEET", "===============================================", "",
+  "Round 1 (Driver Tiago):", document.getElementById("note-r1").value, "",
+  "Round 2 (Customer Ines):", document.getElementById("note-r2").value, "",
+  "Round 3 (Farmer Manuel & Packer Fernando):", document.getElementById("note-r3").value
+].join("\n"));
+
+/* ---------- 5-minute roleplay timer ---------- */
+let tLeft = 300, tInt = null;
+function renderTimer() {
+  const el = document.getElementById("timer");
+  el.textContent = String(Math.floor(tLeft / 60)).padStart(2, "0") + ":" + String(tLeft % 60).padStart(2, "0");
+  el.classList.toggle("done", tLeft === 0);
+}
+function pauseTimer() { if (tInt) clearInterval(tInt); tInt = null; }
+document.getElementById("tStart").onclick = () => { if (tInt || tLeft === 0) return; tInt = setInterval(() => { tLeft--; renderTimer(); if (tLeft === 0) pauseTimer(); }, 1000); };
+document.getElementById("tPause").onclick = pauseTimer;
+document.getElementById("tReset").onclick = () => { pauseTimer(); tLeft = 300; renderTimer(); };
+
+try { const t = localStorage.getItem("clearchain_tab"); if (TABS.includes(t)) showTab(t); } catch (e) {}
+fresh(); render();
+</script>
+
+</body></html>
